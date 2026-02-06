@@ -1,126 +1,191 @@
 REPORT ztest_session6_copilot_fv.
 
 TYPES:
-  BEGIN OF ty_item_src_fv,
-    bukrs        TYPE bukrs,
-    partner_type TYPE c LENGTH 1,     " K=Customer, L=Vendor
-    partner_id   TYPE char10,
-    partner_name TYPE name1,
-    belnr        TYPE belnr_d,
-    gjahr        TYPE gjahr,
-    bldat        TYPE bldat,
-    budat        TYPE budat,
-    waers        TYPE waers,
-    amount_orig  TYPE wrbtr,
-    amount_rep   TYPE wrbtr,
-    rep_waers    TYPE waers,
-    conv_error   TYPE abap_bool,
-  END OF ty_item_src_fv.
+  BEGIN OF ty_item_src,
+    "! Company code
+    bukrs         TYPE bukrs,
+    "! Partner type: K=Customer, L=Vendor
+    partner_type  TYPE c LENGTH 1,
+    "! Partner ID (Customer or Vendor number)
+    partner_id    TYPE char10,
+    "! Partner name
+    partner_name  TYPE name1,
+    "! Accounting document number
+    belnr         TYPE belnr_d,
+    "! Fiscal year
+    gjahr         TYPE gjahr,
+    "! Document date
+    bldat         TYPE bldat,
+    "! Posting date
+    budat         TYPE budat,
+    "! Document currency
+    waers         TYPE waers,
+    "! Original amount in document currency
+    amount_orig   TYPE wrbtr,
+    amount_rep    TYPE wrbtr,   " <-- Add this
 
-TYPES tt_item_src_fv TYPE STANDARD TABLE OF ty_item_src_fv WITH EMPTY KEY.
+    rep_waers     TYPE waers,   " <-- Add this
+    conv_error    TYPE abap_bool,  " ← Nuevo: flag de error conversión
+  END OF ty_item_src.
 
 TYPES:
-  BEGIN OF ty_out_fv,
-    bukrs        TYPE bukrs,
-    partner_type TYPE c LENGTH 1,
-    partner_id   TYPE char10,
-    partner_name TYPE name1,
-    belnr        TYPE belnr_d,
-    gjahr        TYPE gjahr,
-    bldat        TYPE bldat,
-    budat        TYPE budat,
-    waers        TYPE waers,
-    amount_orig  TYPE wrbtr,
-    amount_rep   TYPE wrbtr,
-    rep_waers    TYPE waers,
-    days_open    TYPE i,
-    bucket       TYPE char10,
-    status_text  TYPE char20,
-    status_icon  TYPE icon_d,
-    conv_error   TYPE abap_bool,
-  END OF ty_out_fv.
+  "! Internal table for source items
+  tt_item_src TYPE STANDARD TABLE OF ty_item_src WITH EMPTY KEY.
 
-TYPES tt_out_fv TYPE STANDARD TABLE OF ty_out_fv WITH EMPTY KEY.
+TYPES:
+  BEGIN OF ty_out,
+    "! Company code
+    bukrs         TYPE bukrs,
+    "! Partner type: K=Customer, L=Vendor
+    partner_type  TYPE c LENGTH 1,
+    "! Partner ID (Customer or Vendor number)
+    partner_id    TYPE char10,
+    "! Partner name
+    partner_name  TYPE name1,
+    "! Accounting document number
+    belnr         TYPE belnr_d,
+    "! Fiscal year
+    gjahr         TYPE gjahr,
+    "! Document date
+    bldat         TYPE bldat,
+    "! Posting date
+    budat         TYPE budat,
+    "! Document currency
+    waers         TYPE waers,
+    "! Original amount in document currency
+    amount_orig   TYPE wrbtr,
+    "! Amount in reporting currency (e.g., USD)
+    amount_rep    TYPE wrbtr,
+    "! Reporting currency
+    rep_waers     TYPE waers,
+    "! Days open since posting date
+    days_open     TYPE i,
+    "! Aging bucket (e.g., 0-30, 31-60)
+    bucket        TYPE char10,
+    "! Status text (e.g., Open, Overdue)
+    status_text   TYPE char20,
+    "! Status icon for ALV
+    status_icon   TYPE icon_d,
+    conv_error    TYPE abap_bool,  " ← Nuevo: indicador de error
+  END OF ty_out.
+
+TYPES:
+  "! Output table for ALV
+  tt_out TYPE STANDARD TABLE OF ty_out WITH EMPTY KEY.
 
 TYPES: ty_kunnr_range TYPE RANGE OF kunnr,
        ty_lifnr_range TYPE RANGE OF lifnr,
        ty_budat_range TYPE RANGE OF budat.
 
-CLASS lcl_currency_conv_fv DEFINITION.
+"! <p class="shorttext synchronized">Currency converter for financial amounts</p>
+"! Handles currency conversion using standard SAP exchange rates.
+"! Implements Single Responsibility Principle by isolating conversion logic.
+CLASS lcl_currency_converter DEFINITION.
   PUBLIC SECTION.
+    "! <p class="shorttext synchronized">Conversion parameters structure</p>
     TYPES: BEGIN OF ty_convert_params,
+             "! Amount to convert (source)
              amount_from   TYPE wrbtr,
+             "! Source currency
              currency_from TYPE waers,
+             "! Target currency
              currency_to   TYPE waers,
+             "! Conversion date (for exchange rate lookup)
              conv_date     TYPE budat,
+             "! Exchange rate type (default: M)
              exch_type     TYPE kurst,
+             "! Company code (optional, for client-specific rates)
              company_code  TYPE bukrs,
            END OF ty_convert_params.
 
+    "! <p class="shorttext synchronized">Conversion result structure</p>
     TYPES: BEGIN OF ty_conversion_result,
+             "! Converted amount (target)
              amount_to   TYPE wrbtr,
+             "! Target currency (confirmation)
              currency_to TYPE waers,
-             status      TYPE c LENGTH 1, " S/W/E
+             "! Status: S=Success, W=Warning, E=Error
+             status      TYPE c LENGTH 1,
+             "! Message text (error/warning description)
              message     TYPE string,
+             "! Exchange rate used (optional)
              rate_used   TYPE ukurs,
            END OF ty_conversion_result.
 
-    CONSTANTS gc_default_kurst TYPE kurst VALUE 'M'.
+    "! Default exchange rate type (average rate)
+    CONSTANTS: gc_default_kurst TYPE kurst VALUE 'M'.
 
-    METHODS convert_amount
-      IMPORTING  is_params        TYPE ty_convert_params
-      RETURNING  VALUE(rs_result) TYPE ty_conversion_result.
-
-  PRIVATE SECTION.
-    METHODS validate_params
-      IMPORTING  is_params        TYPE ty_convert_params
-      RETURNING  VALUE(rv_message) TYPE string.
-
-    METHODS execute_conversion
-      IMPORTING  is_params        TYPE ty_convert_params
-      RETURNING  VALUE(rs_result) TYPE ty_conversion_result.
-
-    METHODS build_result_from_subrc
+    "! <p class="shorttext synchronized">Converts amount from source to target currency</p>
+    "! Uses standard SAP currency conversion with error handling.
+    "! @parameter is_params | Conversion parameters (amount, currencies, date, rate type)
+    "! @return rs_result | Conversion result with status and message
+    METHODS: convert_amount
       IMPORTING
-        iv_subrc         TYPE sy-subrc
-        is_params        TYPE ty_convert_params
-        iv_kurst         TYPE kurst
-        iv_amount_to     TYPE wrbtr
-        iv_rate_used     TYPE ukurs
+        is_params       TYPE ty_convert_params
       RETURNING
         VALUE(rs_result) TYPE ty_conversion_result.
 
-    METHODS get_fm_error_message
-      RETURNING VALUE(rv_message) TYPE string.
+  PRIVATE SECTION.
+    "! <p class="shorttext synchronized">Validates input parameters</p>
+    "! Checks mandatory fields and logical consistency.
+    "! @parameter is_params | Parameters to validate
+    "! @return rv_message | Error message if invalid, blank if valid
+    METHODS: validate_params
+      IMPORTING
+        is_params       TYPE ty_convert_params
+      RETURNING
+        VALUE(rv_message) TYPE string.
+
+    "! <p class="shorttext synchronized">Executes standard SAP currency conversion</p>
+    "! Calls CONVERT_TO_LOCAL_CURRENCY FM with exception handling.
+    "! @parameter is_params | Conversion parameters
+    "! @return rs_result | Conversion result
+    METHODS: execute_conversion
+      IMPORTING
+        is_params       TYPE ty_convert_params
+      RETURNING
+        VALUE(rs_result) TYPE ty_conversion_result.
+
+    "! <p class="shorttext synchronized">Formats error message from function module</p>
+    "! Retrieves message text from system variables.
+    "! @return rv_message | Formatted error message
+    METHODS: get_fm_error_message
+      RETURNING
+        VALUE(rv_message) TYPE string.
 ENDCLASS.
 
-CLASS lcl_currency_conv_fv IMPLEMENTATION.
+CLASS lcl_currency_converter IMPLEMENTATION.
 
   METHOD convert_amount.
+    " Initialize result
     CLEAR rs_result.
     rs_result-currency_to = is_params-currency_to.
-    rs_result-status      = 'E'.
+    rs_result-status = 'E'.
 
+    " Validate input parameters
     DATA(lv_error) = validate_params( is_params ).
     IF lv_error IS NOT INITIAL.
       rs_result-message = lv_error.
       RETURN.
     ENDIF.
 
+    " Handle same currency (no conversion needed)
     IF is_params-currency_from = is_params-currency_to.
-      rs_result-amount_to  = is_params-amount_from.
-      rs_result-status     = 'S'.
-      rs_result-message    = |No conversion needed ({ is_params-currency_from })|.
-      rs_result-rate_used  = 1.
+      rs_result-amount_to = is_params-amount_from.
+      rs_result-status = 'S'.
+      rs_result-message = |No conversion needed ({ is_params-currency_from })|.
+      rs_result-rate_used = 1.
       RETURN.
     ENDIF.
 
+    " Execute currency conversion
     rs_result = execute_conversion( is_params ).
   ENDMETHOD.
 
   METHOD validate_params.
     CLEAR rv_message.
 
+    " Check mandatory fields
     IF is_params-amount_from IS INITIAL.
       rv_message = 'Amount is required'.
       RETURN.
@@ -141,110 +206,116 @@ CLASS lcl_currency_conv_fv IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Validate date is not in future
     IF is_params-conv_date > sy-datum.
       rv_message = |Conversion date ({ is_params-conv_date DATE = USER }) cannot be in future|.
       RETURN.
     ENDIF.
-  ENDMETHOD.
 
-  METHOD execute_conversion.
-    CLEAR rs_result.
-    rs_result-currency_to = is_params-currency_to.
-
-    DATA(lv_kurst) = COND kurst(
-      WHEN is_params-exch_type IS NOT INITIAL THEN is_params-exch_type
-      ELSE gc_default_kurst
-    ).
-
-    DATA(lv_amount_to) TYPE wrbtr.
-    DATA(lv_rate_used) TYPE ukurs.
-
-    TRY.
-        CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
-          EXPORTING
-            date             = is_params-conv_date
-            foreign_amount   = is_params-amount_from
-            foreign_currency = is_params-currency_from
-            local_currency   = is_params-currency_to
-            type_of_rate     = lv_kurst
-          IMPORTING
-            local_amount     = lv_amount_to
-            exchange_rate    = lv_rate_used
-          EXCEPTIONS
-            no_rate_found    = 1
-            overflow         = 2
-            no_factors_found = 3
-            no_spread_found  = 4
-            derived_2_times  = 5
-            OTHERS           = 6.
-
-        rs_result = build_result_from_subrc(
-          iv_subrc     = sy-subrc
-          is_params    = is_params
-          iv_kurst     = lv_kurst
-          iv_amount_to = lv_amount_to
-          iv_rate_used = lv_rate_used
-        ).
-
-      CATCH cx_root INTO DATA(lx).
-        rs_result-status  = 'E'.
-        rs_result-message = |Exception during conversion: { lx->get_text( ) }|.
-    ENDTRY.
-
-    IF rs_result-status = 'E'.
-      CLEAR: rs_result-amount_to, rs_result-rate_used.
+    " Validate currencies are different (optimization check)
+    IF is_params-currency_from = is_params-currency_to.
+      " This is not an error, will be handled in main method
+      CLEAR rv_message.
     ENDIF.
   ENDMETHOD.
 
-  METHOD build_result_from_subrc.
-    CLEAR rs_result.
-    rs_result-currency_to = is_params-currency_to.
+ METHOD execute_conversion.
+  " Initialize result
+  CLEAR rs_result.
+  rs_result-currency_to = is_params-currency_to.
 
-    CASE iv_subrc.
-      WHEN 0.
-        rs_result-amount_to  = iv_amount_to.
-        rs_result-rate_used  = iv_rate_used.
-        rs_result-status     = 'S'.
+  " Determine exchange rate type (use default if not provided)
+  DATA(lv_kurst) = COND kurst(
+    WHEN is_params-exch_type IS NOT INITIAL
+    THEN is_params-exch_type
+    ELSE gc_default_kurst
+  ).
 
-        DATA(lv_rate_txt) = CONV string( iv_rate_used ).
-        CONDENSE lv_rate_txt NO-GAPS.
-        rs_result-message = |Converted { is_params-currency_from }->{ is_params-currency_to } (rate: { lv_rate_txt })|.
+  " Call standard SAP currency conversion
+  TRY.
+      CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+        EXPORTING
+          date             = is_params-conv_date
+          foreign_amount   = is_params-amount_from
+          foreign_currency = is_params-currency_from
+          local_currency   = is_params-currency_to
+          type_of_rate     = lv_kurst
+        IMPORTING
+          local_amount     = rs_result-amount_to
+          exchange_rate    = rs_result-rate_used
+        EXCEPTIONS
+          no_rate_found    = 1
+          overflow         = 2
+          no_factors_found = 3
+          no_spread_found  = 4
+          derived_2_times  = 5
+          OTHERS           = 6.
 
-        IF is_params-exch_type IS INITIAL.
-          rs_result-status  = 'W'.
-          rs_result-message = |{ rs_result-message } - Default rate type '{ gc_default_kurst }' used|.
-        ENDIF.
+      CASE sy-subrc.
+        WHEN 0.
+          " Success - Convert rate to character-like for message
+          DATA(lv_rate_text) = CONV string( rs_result-rate_used ).
+          CONDENSE lv_rate_text NO-GAPS.
 
-      WHEN 1.
-        rs_result-status  = 'E'.
-        rs_result-message = |No exchange rate found for { is_params-currency_from }->{ is_params-currency_to } on { is_params-conv_date DATE = USER } (type { iv_kurst })|.
+          rs_result-status = 'S'.
+          rs_result-message = |Converted from { is_params-currency_from } to { is_params-currency_to } (rate: { lv_rate_text })|.
 
-      WHEN 2.
-        rs_result-status  = 'E'.
-        rs_result-message = |Conversion overflow: Amount { is_params-amount_from } too large|.
+          " Warning if default rate type was used
+          IF is_params-exch_type IS INITIAL.
+            rs_result-status = 'W'.
+            rs_result-message = |{ rs_result-message } - Default rate type '{ gc_default_kurst }' used|.
+          ENDIF.
 
-      WHEN 3.
-        rs_result-status  = 'E'.
-        rs_result-message = |No conversion factors found for { is_params-currency_from }/{ is_params-currency_to }|.
+        WHEN 1.
+          " No exchange rate found
+          rs_result-status = 'E'.
+          rs_result-message = |No exchange rate found for { is_params-currency_from } to { is_params-currency_to } on { is_params-conv_date DATE = USER } (type { lv_kurst })|.
 
-      WHEN 4.
-        rs_result-status  = 'E'.
-        rs_result-message = |No spread found for exchange rate type { iv_kurst }|.
+        WHEN 2.
+          " Overflow (amount too large)
+          rs_result-status = 'E'.
+          rs_result-message = |Conversion overflow: Amount { is_params-amount_from } too large for conversion|.
 
-      WHEN 5.
-        rs_result-status  = 'E'.
-        rs_result-message = |Invalid currency path: Cannot derive exchange rate twice|.
+        WHEN 3.
+          " No conversion factors
+          rs_result-status = 'E'.
+          rs_result-message = |No conversion factors found for currencies { is_params-currency_from }/{ is_params-currency_to }|.
 
-      WHEN OTHERS.
-        rs_result-status  = 'E'.
-        rs_result-message = get_fm_error_message( ).
-        IF rs_result-message IS INITIAL.
-          rs_result-message = |Unknown error during currency conversion (SUBRC: { iv_subrc })|.
-        ENDIF.
-    ENDCASE.
-  ENDMETHOD.
+        WHEN 4.
+          " No spread found
+          rs_result-status = 'E'.
+          rs_result-message = |No spread found for exchange rate type { lv_kurst }|.
+
+        WHEN 5.
+          " Derived twice
+          rs_result-status = 'E'.
+          rs_result-message = |Invalid currency path: Cannot derive exchange rate twice|.
+
+        WHEN OTHERS.
+          " General error
+          rs_result-status = 'E'.
+          rs_result-message = get_fm_error_message( ).
+          IF rs_result-message IS INITIAL.
+            rs_result-message = |Unknown error during currency conversion (SUBRC: { sy-subrc })|.
+          ENDIF.
+      ENDCASE.
+
+    CATCH cx_root INTO DATA(lx_error).
+      " Handle unexpected exceptions
+      rs_result-status = 'E'.
+      rs_result-message = |Exception during conversion: { lx_error->get_text( ) }|.
+  ENDTRY.
+
+  " Ensure amount is zero on error
+  IF rs_result-status = 'E'.
+    CLEAR rs_result-amount_to.
+    CLEAR rs_result-rate_used.
+  ENDIF.
+ENDMETHOD.
+
 
   METHOD get_fm_error_message.
+    " Build message from system variables
     IF sy-msgid IS NOT INITIAL.
       MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
         WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
@@ -256,8 +327,10 @@ CLASS lcl_currency_conv_fv IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS lcl_aging_report_fv DEFINITION.
+
+CLASS lcl_aging_report DEFINITION.
   PUBLIC SECTION.
+    "! <p class="shorttext synchronized">Aging report logic for open AR/AP items: reading, enrichment, currency conversion, bucketing, and output mapping.</p>
     CONSTANTS: gc_bucket_30 TYPE i VALUE 30,
                gc_bucket_60 TYPE i VALUE 60,
                gc_bucket_90 TYPE i VALUE 90,
@@ -269,58 +342,80 @@ CLASS lcl_aging_report_fv DEFINITION.
              status_icon TYPE icon_d,
            END OF ty_class.
 
-    METHODS constructor
-      IMPORTING
-        iv_bukrs     TYPE bukrs
-        it_kunnr     TYPE ty_kunnr_range OPTIONAL
-        it_lifnr     TYPE ty_lifnr_range OPTIONAL
-        it_budat     TYPE ty_budat_range OPTIONAL
-        iv_rep_waers TYPE waers DEFAULT 'USD'.
+    "! <p class="shorttext synchronized">Constructor: stores filters and validates input.</p>
+    "! @parameter iv_bukrs | Company code (required)
+    "! @parameter it_kunnr | Customer range (optional)
+    "! @parameter it_lifnr | Vendor range (optional)
+    "! @parameter it_budat | Posting date range (optional)
+    "! @parameter iv_rep_waers | Reporting currency (default USD)
+    METHODS:
+      constructor
+        IMPORTING
+          iv_bukrs     TYPE bukrs
+          it_kunnr     TYPE ty_kunnr_range OPTIONAL
+          it_lifnr     TYPE ty_lifnr_range OPTIONAL
+          it_budat     TYPE ty_budat_range OPTIONAL
+          iv_rep_waers TYPE waers DEFAULT 'USD'.
 
-    METHODS get_data
-      RETURNING VALUE(rt_out) TYPE tt_out_fv.
+    "! <p class="shorttext synchronized">Main orchestration: reads, enriches, converts, classifies, and returns output table.</p>
+    "! @return rt_out | Output table for ALV
+    METHODS: get_data
+        RETURNING VALUE(rt_out) TYPE tt_out.
 
   PRIVATE SECTION.
-    DATA: mv_bukrs     TYPE bukrs,
-          mt_kunnr     TYPE ty_kunnr_range,
-          mt_lifnr     TYPE ty_lifnr_range,
-          mt_budat     TYPE ty_budat_range,
-          mv_rep_waers TYPE waers.
+    DATA: mv_bukrs      TYPE bukrs,
+          mt_kunnr      TYPE ty_kunnr_range,
+          mt_lifnr      TYPE ty_lifnr_range,
+          mt_budat      TYPE ty_budat_range,
+          mv_rep_waers  TYPE waers.
 
-    METHODS validate_input.
+    "! <p class="shorttext synchronized">Validates that company code is not initial.</p>
+    METHODS: validate_input.
 
-    METHODS read_open_items
-      RETURNING VALUE(rt_src) TYPE tt_item_src_fv.
+    "! <p class="shorttext synchronized">Reads open AR/AP items for filters. Joins BKPF for dates.</p>
+    "! @return rt_src | Source items table
+    METHODS: read_open_items
+        RETURNING VALUE(rt_src) TYPE tt_item_src.
 
-    METHODS read_items_by_type
-      IMPORTING
-        iv_partner_type TYPE c LENGTH 1
-      RETURNING
-        VALUE(rt_src)   TYPE tt_item_src_fv.
+    "! <p class="shorttext synchronized">Enriches partner names for customers and vendors using hash lookup.</p>
+    "! @parameter ct_src | Source items to enrich (CHANGING)
+    METHODS: enrich_partner_names
+        CHANGING ct_src TYPE tt_item_src.
 
-    METHODS normalize_partner_id
-      IMPORTING
-        iv_partner_type TYPE c LENGTH 1
-        iv_partner_id   TYPE char10
-      RETURNING
-        VALUE(rv_norm)  TYPE char10.
+    "! <p class="shorttext synchronized">Converts amounts to reporting currency using type M and posting date.</p>
+    "! @parameter ct_src | Source items to convert (CHANGING)
+    METHODS: convert_amounts
+        CHANGING ct_src TYPE tt_item_src.
 
-    METHODS enrich_partner_names
-      CHANGING ct_src TYPE tt_item_src_fv.
+    "! <p class="shorttext synchronized">Converts a single amount to reporting currency using exchange rate type M.</p>
+    "! @parameter iv_amount | Amount to convert
+    "! @parameter iv_waers | Source currency
+    "! @parameter iv_date  | Date for exchange rate
+    "! @return rv_amount   | Converted amount
+    METHODS: convert_currency_m
+        IMPORTING
+          iv_amount TYPE dmbtr
+          iv_waers  TYPE waers
+          iv_date   TYPE budat
+        RETURNING VALUE(rv_amount) TYPE dmbtr.
 
-    METHODS convert_amounts
-      CHANGING ct_src TYPE tt_item_src_fv.
+    "! <p class="shorttext synchronized">Maps source items to output structure, calculates days, bucket, and status.</p>
+    "! @parameter it_src | Source items
+    "! @return rt_out    | Output table
+    METHODS: map_to_out
+        IMPORTING it_src TYPE tt_item_src
+        RETURNING VALUE(rt_out) TYPE tt_out.
 
-    METHODS map_to_out
-      IMPORTING it_src TYPE tt_item_src_fv
-      RETURNING VALUE(rt_out) TYPE tt_out_fv.
+    "! <p>Classifies aging by days: returns bucket, status text, and icon.</p>
+    "! @parameter iv_days | Days open
+    "! @return rs_class   | Classification result
+    METHODS: classify_aging
+        IMPORTING iv_days TYPE i
+        RETURNING VALUE(rs_class) TYPE ty_class.
 
-    METHODS classify_aging
-      IMPORTING iv_days TYPE i
-      RETURNING VALUE(rs_class) TYPE ty_class.
 ENDCLASS.
 
-CLASS lcl_aging_report_fv IMPLEMENTATION.
+CLASS lcl_aging_report IMPLEMENTATION.
 
   METHOD constructor.
     mv_bukrs     = iv_bukrs.
@@ -331,248 +426,321 @@ CLASS lcl_aging_report_fv IMPLEMENTATION.
     validate_input( ).
   ENDMETHOD.
 
-  METHOD validate_input.
-    IF mv_bukrs IS INITIAL.
-      MESSAGE 'Company code (BUKRS) is required.' TYPE 'E'.
-    ENDIF.
-  ENDMETHOD.
+METHOD validate_input.
+  "! Validates that company code is not initial.
+  IF mv_bukrs IS INITIAL.
+    MESSAGE 'Company code (BUKRS) is required.' TYPE 'E'.
+  ENDIF.
+ENDMETHOD.
+
 
   METHOD get_data.
+    "! Reads, enriches, converts, classifies, and returns output table.
     DATA(lt_src) = read_open_items( ).
     enrich_partner_names( CHANGING ct_src = lt_src ).
     convert_amounts( CHANGING ct_src = lt_src ).
     rt_out = map_to_out( lt_src ).
   ENDMETHOD.
 
-  METHOD read_open_items.
-    CLEAR rt_src.
-    rt_src = VALUE #( ( LINES OF read_items_by_type( iv_partner_type = 'K' ) )
-                      ( LINES OF read_items_by_type( iv_partner_type = 'L' ) ) ).
-  ENDMETHOD.
+ METHOD read_open_items.
+  CLEAR rt_src.
 
-  METHOD read_items_by_type.
-    CLEAR rt_src.
+  DATA: lr_kunnr TYPE ty_kunnr_range,
+        lr_lifnr TYPE ty_lifnr_range,
+        lr_budat TYPE ty_budat_range.
 
-    CASE iv_partner_type.
-      WHEN 'K'.
-        SELECT s~bukrs,
-               'K' AS partner_type,
-               s~kunnr AS partner_id,
-               @space AS partner_name,
-               s~belnr,
-               s~gjahr,
-               k~bldat,
-               k~budat,
-               s~waers,
-               s~wrbtr AS amount_orig
-          FROM bsid_view AS s
-          INNER JOIN bkpf AS k
-            ON  s~bukrs = k~bukrs
-            AND s~belnr = k~belnr
-            AND s~gjahr = k~gjahr
-          WHERE s~bukrs = @mv_bukrs
-            AND s~augbl = @space
-            AND ( s~kunnr IN @mt_kunnr )
-            AND ( k~budat IN @mt_budat )
-          INTO CORRESPONDING FIELDS OF TABLE @rt_src.
+  lr_kunnr = mt_kunnr.
+  lr_lifnr = mt_lifnr.
+  lr_budat = mt_budat.
+ CLEAR rt_src.
 
-      WHEN 'L'.
-        SELECT s~bukrs,
-               'L' AS partner_type,
-               s~lifnr AS partner_id,
-               @space AS partner_name,
-               s~belnr,
-               s~gjahr,
-               k~bldat,
-               k~budat,
-               s~waers,
-               s~wrbtr AS amount_orig
-          FROM bsik_view AS s
-          INNER JOIN bkpf AS k
-            ON  s~bukrs = k~bukrs
-            AND s~belnr = k~belnr
-            AND s~gjahr = k~gjahr
-          WHERE s~bukrs = @mv_bukrs
-            AND s~augbl = @space
-            AND ( s~lifnr IN @mt_lifnr )
-            AND ( k~budat IN @mt_budat )
-          INTO CORRESPONDING FIELDS OF TABLE @rt_src.
+  " AR: Open Customer Items
+  SELECT s~bukrs,
+         'K' AS partner_type,
+         s~kunnr AS partner_id,
+         @space AS partner_name,
+         s~belnr,
+         s~gjahr,
+         k~bldat,
+         k~budat,
+         s~waers,
+         s~wrbtr AS amount_orig
+        " @space AS amount_rep,
+        " @space AS rep_waers,
+        " @abap_false AS conv_error
+    FROM bsid_view AS s
+    INNER JOIN bkpf AS k
+      ON  s~bukrs = k~bukrs
+      AND s~belnr = k~belnr
+      AND s~gjahr = k~gjahr
+    WHERE s~bukrs = @mv_bukrs
+      AND s~augbl = @space
+      AND ( s~kunnr IN @mt_kunnr )
+      AND ( k~budat IN @mt_budat )
+    APPENDING CORRESPONDING FIELDS OF TABLE @rt_src.
 
-      WHEN OTHERS.
-        RETURN.
-    ENDCASE.
+  " AP: Open Vendor Items
+  SELECT s~bukrs,
+         'L' AS partner_type,
+         s~lifnr AS partner_id,
+         @space AS partner_name,
+         s~belnr,
+         s~gjahr,
+         k~bldat,
+         k~budat,
+         s~waers,
+         s~wrbtr AS amount_orig
+        " @space AS amount_rep,
+        " @space AS rep_waers,
+        " @abap_false AS conv_error
+    FROM bsik_view AS s
+    INNER JOIN bkpf AS k
+      ON  s~bukrs = k~bukrs
+      AND s~belnr = k~belnr
+      AND s~gjahr = k~gjahr
+    WHERE s~bukrs = @mv_bukrs
+      AND s~augbl = @space
+      AND ( s~lifnr IN @mt_lifnr )
+      AND ( k~budat IN @mt_budat )
+    APPENDING CORRESPONDING FIELDS OF TABLE @rt_src.
 
-    LOOP AT rt_src ASSIGNING FIELD-SYMBOL(<ls_src>).
-      <ls_src>-partner_id = normalize_partner_id(
-        iv_partner_type = <ls_src>-partner_type
-        iv_partner_id   = <ls_src>-partner_id
-      ).
-    ENDLOOP.
-  ENDMETHOD.
+ENDMETHOD.
 
-  METHOD normalize_partner_id.
-    rv_norm = iv_partner_id.
 
-    CASE iv_partner_type.
-      WHEN 'K'.
-        rv_norm = CONV char10( |{ CONV kunnr( iv_partner_id ) ALPHA = IN }| ).
-      WHEN 'L'.
-        rv_norm = CONV char10( |{ CONV lifnr( iv_partner_id ) ALPHA = IN }| ).
-      WHEN OTHERS.
-        rv_norm = iv_partner_id.
-    ENDCASE.
-  ENDMETHOD.
 
-  METHOD enrich_partner_names.
-    DATA lt_kunnr TYPE STANDARD TABLE OF kunnr WITH EMPTY KEY.
-    DATA lt_lifnr TYPE STANDARD TABLE OF lifnr WITH EMPTY KEY.
 
-    LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src_collect>).
-      CASE <ls_src_collect>-partner_type.
-        WHEN 'K'.
-          APPEND CONV kunnr( <ls_src_collect>-partner_id ) TO lt_kunnr.
-        WHEN 'L'.
-          APPEND CONV lifnr( <ls_src_collect>-partner_id ) TO lt_lifnr.
-      ENDCASE.
-    ENDLOOP.
+METHOD enrich_partner_names.
+  DATA: lt_kunnr TYPE STANDARD TABLE OF kunnr,
+        lt_lifnr TYPE STANDARD TABLE OF lifnr,
+        lt_kna1  TYPE HASHED TABLE OF kna1 WITH UNIQUE KEY kunnr,
+        lt_lfa1  TYPE HASHED TABLE OF lfa1 WITH UNIQUE KEY lifnr.
 
-    SORT lt_kunnr.
-    DELETE ADJACENT DUPLICATES FROM lt_kunnr.
-    SORT lt_lifnr.
-    DELETE ADJACENT DUPLICATES FROM lt_lifnr.
-
-    DATA lt_kna1 TYPE HASHED TABLE OF kna1 WITH UNIQUE KEY kunnr.
-    DATA lt_lfa1 TYPE HASHED TABLE OF lfa1 WITH UNIQUE KEY lifnr.
-
-    IF lt_kunnr IS NOT INITIAL.
-      SELECT kunnr, name1
-        FROM kna1
-        FOR ALL ENTRIES IN @lt_kunnr
-        WHERE kunnr = @lt_kunnr-table_line
-        INTO TABLE @lt_kna1.
+  " Collect unique customer/vendor IDs with ALPHA conversion
+  LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src>).
+    IF <ls_src>-partner_type = 'K' AND <ls_src>-partner_id IS NOT INITIAL.
+      DATA(lv_kunnr) = CONV kunnr( <ls_src>-partner_id ).
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = <ls_src>-partner_id
+        IMPORTING
+          output = lv_kunnr.
+      APPEND lv_kunnr TO lt_kunnr.
+    ELSEIF <ls_src>-partner_type = 'L' AND <ls_src>-partner_id IS NOT INITIAL.
+      DATA(lv_lifnr) = CONV lifnr( <ls_src>-partner_id ).
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = <ls_src>-partner_id
+        IMPORTING
+          output = lv_lifnr.
+      APPEND lv_lifnr TO lt_lifnr.
     ENDIF.
+  ENDLOOP.
 
-    IF lt_lifnr IS NOT INITIAL.
-      SELECT lifnr, name1
-        FROM lfa1
-        FOR ALL ENTRIES IN @lt_lifnr
-        WHERE lifnr = @lt_lifnr-table_line
-        INTO TABLE @lt_lfa1.
+  " Read customer master data
+  IF lt_kunnr IS NOT INITIAL.
+    SELECT kunnr, name1
+      FROM kna1
+      FOR ALL ENTRIES IN @lt_kunnr
+      WHERE kunnr = @lt_kunnr-table_line
+      INTO TABLE @lt_kna1.
+  ENDIF.
+
+  " Read vendor master data
+  IF lt_lifnr IS NOT INITIAL.
+    SELECT lifnr, name1
+      FROM lfa1
+      FOR ALL ENTRIES IN @lt_lifnr
+      WHERE lifnr = @lt_lifnr-table_line
+      INTO TABLE @lt_lfa1.
+  ENDIF.
+
+  " Enrich partner names using hash lookup
+  LOOP AT ct_src ASSIGNING <ls_src>.
+    IF <ls_src>-partner_type = 'K'.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = <ls_src>-partner_id
+        IMPORTING
+          output = lv_kunnr.
+
+      TRY.
+          <ls_src>-partner_name = lt_kna1[ kunnr = lv_kunnr ]-name1.
+        CATCH cx_sy_itab_line_not_found.
+          <ls_src>-partner_name = '[No customer]'.
+      ENDTRY.
+
+    ELSEIF <ls_src>-partner_type = 'L'.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = <ls_src>-partner_id
+        IMPORTING
+          output = lv_lifnr.
+
+      TRY.
+          <ls_src>-partner_name = lt_lfa1[ lifnr = lv_lifnr ]-name1.
+        CATCH cx_sy_itab_line_not_found.
+          <ls_src>-partner_name = '[No vendor]'.
+      ENDTRY.
     ENDIF.
+  ENDLOOP.
+ENDMETHOD.
 
-    LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src>).
-      CASE <ls_src>-partner_type.
-        WHEN 'K'.
-          IF line_exists( lt_kna1[ kunnr = CONV kunnr( <ls_src>-partner_id ) ] ).
-            <ls_src>-partner_name = lt_kna1[ kunnr = CONV kunnr( <ls_src>-partner_id ) ]-name1.
-          ELSE.
-            <ls_src>-partner_name = '[No customer]'.
-          ENDIF.
-        WHEN 'L'.
-          IF line_exists( lt_lfa1[ lifnr = CONV lifnr( <ls_src>-partner_id ) ] ).
-            <ls_src>-partner_name = lt_lfa1[ lifnr = CONV lifnr( <ls_src>-partner_id ) ]-name1.
-          ELSE.
-            <ls_src>-partner_name = '[No vendor]'.
-          ENDIF.
-      ENDCASE.
-    ENDLOOP.
-  ENDMETHOD.
 
-  METHOD convert_amounts.
-    DATA(lo_conv) = NEW lcl_currency_conv_fv( ).
+METHOD convert_amounts.
 
-    LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src>).
-      DATA(ls_params) = VALUE lcl_currency_conv_fv=>ty_convert_params(
-        amount_from   = <ls_src>-amount_orig
-        currency_from = <ls_src>-waers
-        currency_to   = mv_rep_waers
-        conv_date     = <ls_src>-budat
-        exch_type     = gc_kurst
-        company_code  = mv_bukrs
-      ).
+  DATA(lo_converter) = NEW lcl_currency_converter( ).
 
-      DATA(ls_res) = lo_conv->convert_amount( ls_params ).
-
-      <ls_src>-rep_waers  = ls_res-currency_to.
-      <ls_src>-amount_rep = ls_res-amount_to.
-      <ls_src>-conv_error = xsdbool( ls_res-status = 'E' ).
-    ENDLOOP.
-  ENDMETHOD.
-
-  METHOD map_to_out.
-    rt_out = VALUE tt_out_fv(
-      FOR ls_src IN it_src
-      LET lv_days = COND i(
-                      WHEN ls_src-budat IS NOT INITIAL
-                      THEN CONV i( sy-datum - ls_src-budat )
-                      ELSE -1 )
-          ls_class = classify_aging( iv_days = lv_days )
-      IN (
-        bukrs        = ls_src-bukrs
-        partner_type = ls_src-partner_type
-        partner_id   = ls_src-partner_id
-        partner_name = ls_src-partner_name
-        belnr        = ls_src-belnr
-        gjahr        = ls_src-gjahr
-        bldat        = ls_src-bldat
-        budat        = ls_src-budat
-        waers        = ls_src-waers
-        amount_orig  = ls_src-amount_orig
-        amount_rep   = ls_src-amount_rep
-        rep_waers    = ls_src-rep_waers
-        days_open    = lv_days
-        bucket       = ls_class-bucket
-        status_text  = ls_class-status_text
-        status_icon  = ls_class-status_icon
-        conv_error   = ls_src-conv_error
-      )
+  LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src>).
+    DATA(ls_params) = VALUE lcl_currency_converter=>ty_convert_params(
+      amount_from   = <ls_src>-amount_orig
+      currency_from = <ls_src>-waers
+      currency_to   = mv_rep_waers
+      conv_date     = <ls_src>-budat
+      exch_type     = lcl_aging_report=>gc_kurst
+      company_code  = mv_bukrs
     ).
-  ENDMETHOD.
 
-  METHOD classify_aging.
-    CLEAR rs_class.
+    DATA(ls_result) = lo_converter->convert_amount( ls_params ).
 
-    IF iv_days < 0.
-      rs_class-bucket      = 'Invalid'.
-      rs_class-status_text = 'Invalid date'.
-      rs_class-status_icon = icon_led_inactive.
-      RETURN.
-    ENDIF.
+    <ls_src>-amount_rep = ls_result-amount_to.
+    <ls_src>-rep_waers  = ls_result-currency_to.
+    <ls_src>-conv_error = COND #( WHEN ls_result-status = 'E' THEN abap_true ELSE abap_false ).
+  ENDLOOP.
 
-    IF iv_days <= gc_bucket_30.
-      rs_class-bucket      = '0-30'.
-      rs_class-status_text = 'On time'.
-      rs_class-status_icon = icon_green_light.
-      RETURN.
-    ENDIF.
+*  LOOP AT ct_src ASSIGNING FIELD-SYMBOL(<ls_src>).
+*    <ls_src>-rep_waers = mv_rep_waers.
+*
+*    " Skip conversion if already in target currency
+*    IF <ls_src>-waers = mv_rep_waers.
+*      <ls_src>-amount_rep = <ls_src>-amount_orig.
+*      <ls_src>-conv_error = abap_false.
+*      CONTINUE.
+*    ENDIF.
+*
+*    " Perform standard FI currency conversion
+*    TRY.
+*        <ls_src>-amount_rep = convert_currency_m(
+*          iv_amount = <ls_src>-amount_orig
+*          iv_waers  = <ls_src>-waers
+*          iv_date   = <ls_src>-budat
+*        ).
+*        <ls_src>-conv_error = abap_false.
+*
+*      CATCH cx_root.
+*        <ls_src>-amount_rep = 0.
+*        <ls_src>-conv_error = abap_true.
+*    ENDTRY.
+*  ENDLOOP.
+ENDMETHOD.
 
-    IF iv_days <= gc_bucket_60.
-      rs_class-bucket      = '31-60'.
-      rs_class-status_text = 'Warning'.
-      rs_class-status_icon = icon_yellow_light.
-      RETURN.
-    ENDIF.
 
-    IF iv_days <= gc_bucket_90.
-      rs_class-bucket      = '61-90'.
-      rs_class-status_text = 'High risk'.
-      rs_class-status_icon = icon_yellow_light.
-      RETURN.
-    ENDIF.
+METHOD convert_currency_m.
+  " Validate input date
+  IF iv_date IS INITIAL.
+   " RAISE EXCEPTION TYPE cx_sy_conversion_error.
+  ENDIF.
 
+  " Use standard FI currency conversion
+  CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+    EXPORTING
+      date             = iv_date
+      foreign_amount   = iv_amount
+      foreign_currency = iv_waers
+      local_currency   = mv_rep_waers
+      rate_type        = gc_kurst
+    IMPORTING
+      local_amount     = rv_amount
+    EXCEPTIONS
+      no_rate_found    = 1
+      overflow         = 2
+      no_factors_found = 3
+      no_spread_found  = 4
+      derived_2_times  = 5
+      OTHERS           = 6.
+
+  IF sy-subrc <> 0.
+    " Raise exception to be caught in convert_amounts
+    MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      "RAISING cx_sy_conversion_error.
+  ENDIF.
+ENDMETHOD.
+
+
+METHOD map_to_out.
+  rt_out = VALUE tt_out(
+    FOR ls_src IN it_src
+    LET lv_days = COND i(
+                    WHEN ls_src-budat IS NOT INITIAL
+                    THEN CONV i( sy-datum - ls_src-budat )
+                    ELSE -1 )
+        ls_class = classify_aging( iv_days = lv_days )
+    IN (
+      bukrs        = ls_src-bukrs
+      partner_type = ls_src-partner_type
+      partner_id   = ls_src-partner_id
+      partner_name = ls_src-partner_name
+      belnr        = ls_src-belnr
+      gjahr        = ls_src-gjahr
+      bldat        = ls_src-bldat
+      budat        = ls_src-budat
+      waers        = ls_src-waers
+      amount_orig  = ls_src-amount_orig
+      amount_rep   = ls_src-amount_rep
+      rep_waers    = ls_src-rep_waers
+      days_open    = lv_days
+      bucket       = ls_class-bucket
+      status_text  = ls_class-status_text
+      status_icon  = ls_class-status_icon
+      conv_error   = ls_src-conv_error
+    )
+  ).
+ENDMETHOD.
+
+METHOD classify_aging.
+  CLEAR rs_class.
+
+  " Handle invalid dates
+  IF iv_days < 0.
+    rs_class-bucket      = 'Invalid'.
+    rs_class-status_text = 'Invalid date'.
+    rs_class-status_icon = icon_led_inactive.
+    RETURN.
+  ENDIF.
+
+  " Classify aging buckets
+  IF iv_days <= gc_bucket_30.
+    rs_class-bucket      = '0-30'.
+    rs_class-status_text = 'On time'.
+    rs_class-status_icon = icon_green_light.
+  ELSEIF iv_days <= gc_bucket_60.
+    rs_class-bucket      = '31-60'.
+    rs_class-status_text = 'Warning'.
+    rs_class-status_icon = icon_yellow_light.
+  ELSEIF iv_days <= gc_bucket_90.
+    rs_class-bucket      = '61-90'.
+    rs_class-status_text = 'High risk (Orange)'.
+    rs_class-status_icon = icon_yellow_light.
+  ELSE.
     rs_class-bucket      = '>90'.
     rs_class-status_text = 'Critical'.
     rs_class-status_icon = icon_red_light.
-  ENDMETHOD.
+  ENDIF.
+ENDMETHOD.
+
 
 ENDCLASS.
 
+
 START-OF-SELECTION.
+  " =================================================================
+  " Test Section - Currency Converter
+  " =================================================================
+  DATA(lo_converter) = NEW lcl_currency_converter( ).
 
-  DATA(lo_converter) = NEW lcl_currency_conv_fv( ).
-
+  " Test 1: EUR to USD conversion
   WRITE: / '=== Test 1: EUR to USD Conversion ==='.
-  DATA(ls_params1) = VALUE lcl_currency_conv_fv=>ty_convert_params(
+  DATA(ls_params1) = VALUE lcl_currency_converter=>ty_convert_params(
     amount_from   = '1000.00'
     currency_from = 'EUR'
     currency_to   = 'USD'
@@ -589,8 +757,9 @@ START-OF-SELECTION.
   WRITE: / 'Message    :', ls_result1-message.
   SKIP 1.
 
+  " Test 2: Same currency (no conversion)
   WRITE: / '=== Test 2: Same Currency (USD to USD) ==='.
-  DATA(ls_params2) = VALUE lcl_currency_conv_fv=>ty_convert_params(
+  DATA(ls_params2) = VALUE lcl_currency_converter=>ty_convert_params(
     amount_from   = '500.00'
     currency_from = 'USD'
     currency_to   = 'USD'
@@ -606,8 +775,9 @@ START-OF-SELECTION.
   WRITE: / 'Message    :', ls_result2-message.
   SKIP 1.
 
+  " Test 3: Invalid date (future date)
   WRITE: / '=== Test 3: Invalid Date (Future) ==='.
-  DATA(ls_params3) = VALUE lcl_currency_conv_fv=>ty_convert_params(
+  DATA(ls_params3) = VALUE lcl_currency_converter=>ty_convert_params(
     amount_from   = '750.00'
     currency_from = 'EUR'
     currency_to   = 'USD'
@@ -621,8 +791,9 @@ START-OF-SELECTION.
   WRITE: / 'Message    :', ls_result3-message.
   SKIP 1.
 
+  " Test 4: Missing required fields
   WRITE: / '=== Test 4: Missing Required Fields ==='.
-  DATA(ls_params4) = VALUE lcl_currency_conv_fv=>ty_convert_params(
+  DATA(ls_params4) = VALUE lcl_currency_converter=>ty_convert_params(
     amount_from   = '0'
     currency_from = space
     currency_to   = 'USD'
@@ -636,8 +807,9 @@ START-OF-SELECTION.
   WRITE: / 'Message    :', ls_result4-message.
   SKIP 1.
 
+  " Test 5: Aging Report Integration
   WRITE: / '=== Test 5: Aging Report Integration ==='.
-  DATA(lo_report) = NEW lcl_aging_report_fv(
+  DATA(lo_report) = NEW lcl_aging_report(
     iv_bukrs     = '1000'
     iv_rep_waers = 'USD'
   ).
