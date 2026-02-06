@@ -1,0 +1,208 @@
+
+PROMPT 0
+
+Actúa como consultor ABAP senior (S/4HANA/ECC) aplicando Clean ABAP y principios SOLID.
+Proyecto: Sistema de Auditoría y Corrección de Business Partners.
+
+Objetivo:
+Leer Business Partners desde BUT000, validar información según tipo
+(Persona u Organización), validar contactos, proponer correcciones
+y actualizar registros usando APIs estándar de SAP.
+
+Restricciones obligatorias:
+- Todos los objetos Z deben terminar con el sufijo _FV
+- ABAP 7.4+
+- Evitar SELECT *
+- Evitar SELECT en loops
+- Usar OO, métodos pequeños y early return
+- Manejo de errores con excepciones propias y SLG1 cuando aplique
+
+Entrega esperada:
+- Diseño de clases e interfaces
+- Firmas de métodos (sin implementación)
+- Responsabilidades claras por objeto
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASES POR RESPONSABILIDAD (SOLID)
+--------------------------------------------------------
+Diseña la arquitectura orientada a objetos aplicando SOLID.
+Crea clases ABAP Z* todas con sufijo _FV para las siguientes responsabilidades:
+
+- Lectura de datos
+- Validación de organizaciones
+- Validación de personas
+- Validación de contactos
+- Actualización de datos
+- Coordinación del proceso
+
+Entrega:
+1) Lista de clases con nombre y responsabilidad (1 línea)
+2) Métodos públicos de cada clase (solo firmas)
+3) Dependencias mediante interfaces (DIP)
+No generar implementación, solo diseño.
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASE DE LECTURA DE DATOS
+--------------------------------------------------------
+Diseña la clase ZCL_BP_READER_FV.
+
+Responsabilidad:
+Lectura de Business Partners desde BUT000 y datos mínimos relacionados
+para validaciones.
+
+Requisitos:
+- Método ReadPartners con filtros de selección
+- Retornar tabla interna tipada
+- Proponer SELECTs eficientes y SARGables
+- No SELECT en loops
+- Excepción ZCX_BP_READ_FV
+
+Entrega:
+- Definición de la clase (PUBLIC SECTION)
+- Firmas de métodos
+- Tipos sugeridos con sufijo _FV
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASE VALIDACIÓN ORGANIZACIONES
+--------------------------------------------------------
+Diseña la clase ZCL_BP_VAL_ORG_FV.
+
+Responsabilidad:
+Validar Business Partners tipo Organización.
+
+Validaciones:
+- NIT empresarial (formato XXXXXXXX-X)
+- Campos obligatorios
+- Longitudes de campos
+- Datos de contacto si aplican
+
+Requisitos:
+- Método Validate( is_bp ) RETURNING rt_messages
+- No lanzar excepciones por validación
+- Retornar mensajes estructurados
+- Reutilizar validaciones comunes vía interfaz
+
+Entrega:
+- Definición de clase
+- Firma de métodos
+- Estructura de mensajes ZTY_VAL_MSG_FV
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASE VALIDACIÓN PERSONAS
+--------------------------------------------------------
+Diseña la clase ZCL_BP_VAL_PER_FV.
+
+Responsabilidad:
+Validar Business Partners tipo Persona.
+
+Validaciones:
+- DPI/CUI de 13 dígitos
+- Email con formato estándar
+- Teléfono +502XXXXXXXX
+- Campos obligatorios
+
+Requisitos:
+- Método Validate( is_bp ) RETURNING rt_messages
+- Reutilizar reglas comunes
+- Sin acceso directo a BD
+
+Entrega:
+- Definición de clase
+- Firmas de métodos
+- Tipos con sufijo _FV
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASE VALIDACIÓN CONTACTOS
+--------------------------------------------------------
+Diseña la clase ZCL_BP_VAL_CON_FV.
+
+Responsabilidad:
+Validar datos de contacto de un BP.
+
+Validaciones:
+- Email válido
+- Teléfono válido
+- Soporte para múltiples contactos por BP
+
+Requisitos:
+- Método ValidateContacts( it_contacts )
+- Retornar mensajes por registro
+- Incluir partner y referencia del contacto
+
+Entrega:
+- Definición de clase
+- Firmas de métodos
+- Tipos con sufijo _FV
+
+--------------------------------------------------------
+PROMPT 1.1 – CLASE DE ACTUALIZACIÓN
+--------------------------------------------------------
+Diseña la clase ZCL_BP_UPDATER_FV.
+
+Responsabilidad:
+Actualizar Business Partners mediante APIs estándar SAP.
+
+Requisitos:
+- Método UpdatePartners( it_changes )
+- Manejo correcto de LUW
+- Commit / rollback controlado
+- Registro de errores en SLG1
+- Excepción técnica ZCX_BP_UPDATE_FV
+
+Entrega:
+- Definición de clase
+- Firmas de métodos
+- Tipos de entrada y salida con _FV
+
+--------------------------------------------------------
+PROMPT 1.1 / 1.3 – CLASE COORDINADORA
+--------------------------------------------------------
+Diseña la clase ZCL_BP_COORDINATOR_FV.
+
+Responsabilidad:
+Orquestar el proceso completo:
+Lectura -> Validación -> Propuesta -> Actualización.
+
+Requisitos:
+- Uso de interfaces para inyección de dependencias
+- Método Execute( is_selection )
+- Retornar salida para ALV con semáforos (OK/WARN/ERROR)
+- No acceso directo a BD
+
+Entrega:
+- Definición de clase
+- Constructor con interfaces
+- Tipos de salida con sufijo _FV
+
+--------------------------------------------------------
+PROMPT 1.2 – DISEÑO DE INTERFACES
+--------------------------------------------------------
+Crea las siguientes interfaces ABAP (todas con sufijo _FV):
+
+1) ZIF_BP_VALIDATOR_FV
+   - Método Validate( is_bp ) RETURNING rt_messages
+
+2) ZIF_BP_READER_FV
+   - Método ReadPartners( is_selection ) RETURNING rt_bp_data
+
+3) ZIF_BP_UPDATER_FV
+   - Método UpdatePartners( it_changes ) RETURNING rt_result
+
+Requisitos:
+- Tipos con sufijo _FV
+- ABAPDoc breve
+- Solo definición, sin implementación
+
+--------------------------------------------------------
+PROMPT 1.3 – ARQUITECTURA DE COMPONENTES
+--------------------------------------------------------
+Define la arquitectura de componentes del sistema.
+
+Entrega:
+- Flujo de comunicación entre clases
+- Responsabilidad de cada componente
+- Reglas de dependencia (quién conoce a quién)
+- Qué se puede testear con ABAP Unit
+
+No generar código, solo diseño arquitectónico claro.
+========================================================
