@@ -1,0 +1,176 @@
+Actúa como consultor ABAP Senior experto en S/4HANA (ABAP 7.4+, Clean ABAP, performance).
+
+La solución debe construirse COMPLETAMENTE DESDE CERO.
+
+Debes generar:
+- Interfaces completas (DEFINITION)
+- Clases completas (DEFINITION + IMPLEMENTATION)
+- Excepción completa (DEFINITION + IMPLEMENTATION)
+- Tipos necesarios dentro de las interfaces/clases
+- Firmas correctas y consistentes
+- Lógica completa lista para activar
+
+IMPORTANTE:
+- No asumir que ya existe código previo.
+- No crear objetos adicionales.
+- No renombrar nada.
+- No dejar métodos vacíos.
+- No generar pseudocódigo.
+- Entregar código real completo.
+
+Objetos obligatorios (crear desde cero con estos nombres exactos):
+
+Excepción:
+- ZCX_BP_AUDIT_FV
+
+Interfaces:
+- ZIF_BP_AUDIT_LOG_FV
+- ZIF_BP_REPO_FV
+- ZIF_BP_UPDATER_FV
+- ZIF_BP_VALIDATOR_FV
+
+Clases:
+- ZCL_BP_AUDIT_LOG_FV
+- ZCL_BP_COORD_FV
+- ZCL_BP_REPO_FV
+- ZCL_BP_UPDATER_FV
+- ZCL_BP_VAL_CON_FV
+- ZCL_BP_VAL_ORG_FV
+- ZCL_BP_VAL_PER_FV
+
+Reglas obligatorias de implementación:
+- ABAP 7.4+
+- Usar DATA(...) inline
+- FIELD-SYMBOL(<fs_...>)
+- VALUE, CORRESPONDING
+- COND, SWITCH
+- Sin SELECT en LOOP
+- Sin FILTER
+- Métodos pequeños (1 responsabilidad)
+- Early return
+- Los validadores NO pueden acceder a BD (sin SELECT)
+- Performance primero
+
+====================================================================
+1) INTERFAZ ZIF_BP_VALIDATOR_FV (desde cero)
+====================================================================
+Crear la interfaz con:
+- TYPE ty_issue con campos:
+  - fieldname TYPE string
+  - severity TYPE c LENGTH 1  (valores: 'E', 'W')
+  - message TYPE string
+  - proposal TYPE string (opcional / puede ser initial)
+- TYPE ty_t_issues TYPE STANDARD TABLE OF ty_issue WITH EMPTY KEY
+- TYPE ty_bp_data con campos mínimos:
+  - bp_type TYPE string          "Valores esperados: '1', 'PERSON', 'CONTACT'
+  - nit     TYPE string
+  - dpi     TYPE string
+  - email   TYPE string
+  - phone   TYPE string
+- Método VALIDATE:
+  - IMPORTING is_bp_data TYPE ty_bp_data
+  - RETURNING VALUE(rt_issues) TYPE ty_t_issues
+
+Sin DB.
+
+====================================================================
+2) VALIDADORES (desde cero)
+====================================================================
+
+2.1) ZCL_BP_VAL_ORG_FV (NIT Empresarial)
+- Implementa ZIF_BP_VALIDATOR_FV
+- Solo validar si is_bp_data-bp_type = '1'
+- Validación oficial NIT:
+  - Formato: XXXXXXXX-X o XXXXXXXXX-X
+  - Regex exacto: ^\d{8,9}-\d$
+  - Si viene sin guion pero con 9-10 dígitos:
+      -> WARNING con proposal agregando guion antes del último dígito
+  - No permitir todos los dígitos iguales
+- Sin DB, early return
+- Método privado para normalizar y otro para construir proposal con guion
+
+2.2) ZCL_BP_VAL_PER_FV (DPI Personal)
+- Implementa ZIF_BP_VALIDATOR_FV
+- Solo validar si is_bp_data-bp_type = 'PERSON'
+- Validación oficial DPI:
+  - Obligatorio
+  - Exactamente 13 dígitos consecutivos
+  - Regex: ^\d{13}$
+  - Si viene con separadores (espacios/guiones):
+      -> normalizar + WARNING con proposal
+  - No permitir 13 dígitos iguales
+- Sin DB, early return
+
+2.3) ZCL_BP_VAL_CON_FV (Email + Teléfono)
+- Implementa ZIF_BP_VALIDATOR_FV
+- Solo validar si is_bp_data-bp_type = 'CONTACT'
+
+EMAIL (RFC 5322):
+- Validar RFC 5322 con CL_ABAP_MATCHER usando un regex “full/common”
+- Evitar literal >255: dividir el regex en partes (gc_rfc_01..gc_rfc_0n) y concatenar en runtime
+- Longitud total <= 254
+- Local-part <= 64
+- Exactamente un '@'
+- Si vacío -> WARNING
+- Si inválido -> ERROR
+- Validar case-insensitive (usar to_lower antes del matcher)
+- No usar sy-fdpos para offsets
+
+TELÉFONO:
+- Normalizar dejando solo dígitos (REGEX)
+- Validación oficial: +502 seguido de 8 dígitos
+  -> validar como 11 dígitos iniciando con '502'
+- Si vacío -> WARNING
+- Si inválido -> ERROR
+- Un issue por campo inválido
+
+====================================================================
+3) REPOSITORIO / UPDATER / LOG / COORDINADOR (desde cero)
+====================================================================
+
+3.1) ZIF_BP_REPO_FV + ZCL_BP_REPO_FV
+- Interfaz define método para obtener lista de BP (ty_t_bp_data)
+- Implementación puede tener SELECT, pero:
+  - Sin SELECT * 
+  - Sin SELECT en LOOP
+  - Usar JOIN / FAE correctamente
+- Retornar datos en estructura compatible con validadores
+
+3.2) ZIF_BP_UPDATER_FV + ZCL_BP_UPDATER_FV
+- Interfaz define método para aplicar propuestas
+- Clase implementa actualización vía API estándar BP (sin COMMIT aquí si el diseño lo centraliza)
+- Manejo de errores con ZCX_BP_AUDIT_FV
+
+3.3) ZIF_BP_AUDIT_LOG_FV + ZCL_BP_AUDIT_LOG_FV
+- Interfaz define método para persistir issues/propuestas
+- Implementación puede insertar en tabla log (sin COMMIT si diseño lo centraliza)
+
+3.4) ZCL_BP_COORD_FV
+- Orquesta:
+  1) Leer datos (repo)
+  2) Determinar tipo con SWITCH (según bp_type)
+  3) Ejecutar validadores
+  4) Consolidar y deduplicar issues (hashed table)
+  5) Ejecutar updater si aplica
+  6) Registrar log
+- Manejar errores con ZCX_BP_AUDIT_FV
+- Métodos pequeños, early return
+
+====================================================================
+4) EXCEPCIÓN ZCX_BP_AUDIT_FV (desde cero)
+====================================================================
+Crear clase de excepción:
+- Heredar de CX_STATIC_CHECK
+- Constructor para mensaje
+- Atributo mv_text TYPE string (o similar)
+- Debe usarse en repo/updater/coordinator para errores críticos
+
+ENTREGA:
+- Producir el código completo (DEFINITION + IMPLEMENTATION) de:
+  ZCX_BP_AUDIT_FV
+  ZIF_BP_AUDIT_LOG_FV, ZIF_BP_REPO_FV, ZIF_BP_UPDATER_FV, ZIF_BP_VALIDATOR_FV
+  ZCL_BP_AUDIT_LOG_FV, ZCL_BP_COORD_FV, ZCL_BP_REPO_FV, ZCL_BP_UPDATER_FV
+  ZCL_BP_VAL_CON_FV, ZCL_BP_VAL_ORG_FV, ZCL_BP_VAL_PER_FV
+
+Sin crear otros objetos.
+Listo para activar.
