@@ -1,0 +1,71 @@
+BLOQUE 2 – DESARROLLO CORE (PROMPTS OFICIALES)
+
+================================================== PROMPT 0 – CONTEXTO
+BASE ================================================== Actúa como
+consultor ABAP senior (ABAP 7.4+, Clean ABAP, performance). Este
+proyecto ya existe y NO debes crear nuevos nombres de objetos, solo
+completar/ajustar los existentes.
+
+Objetos disponibles: - Programa: ZBP_AUDIT_FIX_FV - Tabla log:
+ZBP_AUDITLOG_FV - Excepción: ZCX_BP_AUDIT_FV - Clases: -
+ZCL_BP_AUDIT_LOG_FV - ZCL_BP_COORD_FV - ZCL_BP_REPO_FV -
+ZCL_BP_UPDATER_FV - ZCL_BP_VAL_CON_FV - ZCL_BP_VAL_ORG_FV -
+ZCL_BP_VAL_PER_FV - Interfaces: - ZIF_BP_AUDIT_LOG_FV - ZIF_BP_REPO_FV -
+ZIF_BP_UPDATER_FV - ZIF_BP_VALIDATOR_FV
+
+Reglas: - ABAP 7.4+ (inline DATA, FIELD-SYMBOL, VALUE, CORRESPONDING,
+COND, SWITCH). - Evitar SELECT en loops. - No usar FILTER. - Métodos
+pequeños y early return. - Sin DB dentro de validadores.
+
+================================================== 2.1 SINTAXIS MODERNA
+==================================================
+
+PROMPT 2.1.1 – Ajustar ZCL_BP_COORD_FV Ajusta el método principal para
+usar: - DATA(…) inline - FIELD-SYMBOL(<fs_…>) - VALUE y CORRESPONDING -
+COND y SWITCH Sin SELECT. Early return si no hay datos.
+
+PROMPT 2.1.2 – Snippets útiles Genera snippets ABAP 7.4+ para: -
+Determinar tipo BP con SWITCH. - Construir issue con VALUE + COND. -
+Deduplicar con hashed table. - Validar IS ASSIGNED.
+
+================================================== 2.2 VALIDADORES
+==================================================
+
+PROMPT 2.2.1 – Ajustar ZIF_BP_VALIDATOR_FV Definir firma clara: -
+IMPORTING is_bp - RETURNING rt_issue Sin DB. Solo retornar lista de
+hallazgos.
+
+PROMPT 2.2.2 – ZCL_BP_VAL_ORG_FV (NIT) Validar: - Solo organizaciones -
+Normalizar - Longitud configurable - Caracteres válidos - Proposal con
+valor normalizado
+
+PROMPT 2.2.3 – ZCL_BP_VAL_PER_FV (DPI) Validar: - Solo personas - Solo
+dígitos - Longitud fija - Proposal con valor normalizado
+
+PROMPT 2.2.4 – ZCL_BP_VAL_CON_FV (Email/Phone) Validar: - Email formato
+básico - Teléfono normalizado solo dígitos - Un issue por campo inválido
+
+================================================== 2.3 COORDINADOR
+==================================================
+
+PROMPT 2.3.1 – Flujo completo ZCL_BP_COORD_FV Orquestar: 1) Leer vía
+ZCL_BP_REPO_FV 2) Determinar tipo con SWITCH 3) Ejecutar validadores 4)
+Generar propuestas 5) Actualizar vía ZCL_BP_UPDATER_FV si aplica 6)
+Persistir en ZCL_BP_AUDIT_LOG_FV
+
+Sin DB directa. Deduplicar issues con hashed table. Manejar errores con
+ZCX_BP_AUDIT_FV.
+
+PROMPT 2.3.2 – Repo eficiente En ZCL_BP_REPO_FV: - Leer BUT000 - Leer
+contactos sin SELECT en LOOP - Sin SELECT * - FAE validando tabla no
+vacía
+
+PROMPT 2.3.3 – Updater controlado En ZCL_BP_UPDATER_FV: - Recibir
+propuestas - Actualizar vía API estándar - Manejar retorno - Sin COMMIT
+si diseño lo centraliza
+
+================================================== PROMPT FINAL –
+Reporte ZBP_AUDIT_FIX_FV
+================================================== Implementar: -
+Selection-screen básica - Instanciar ZCL_BP_COORD_FV - Mostrar resumen
+final
