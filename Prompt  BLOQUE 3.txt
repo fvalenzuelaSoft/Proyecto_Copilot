@@ -1,0 +1,98 @@
+Actúa como consultor ABAP senior (ABAP 7.4+, Clean ABAP, performance).
+
+Contexto: Proyecto existente. NO crear nuevos objetos Z.
+Objetos disponibles:
+- Reporte: ZBP_AUDIT_FIX_FV
+- Coordinador: ZCL_BP_COORD_FV con método:
+  execute_audit_and_fix(
+    IMPORTING it_partner_range TYPE ty_partner_range
+              iv_bp_type       TYPE c DEFAULT 'A'
+              iv_simulation    TYPE abap_bool DEFAULT abap_true
+    RETURNING VALUE(rt_result) TYPE tt_alv )
+- Updater: ZCL_BP_UPDATER_FV (ZIF_BP_UPDATER_FV)
+- Log: ZCL_BP_AUDIT_LOG_FV (tabla ZBP_AUDITLOG_FV)
+- Excepción: ZCX_BP_AUDIT_FV
+
+Objetivo:
+Implementar BLOQUE 3 (UI y Persistencia) en ZBP_AUDIT_FIX_FV:
+- Selection-screen
+- Ejecución del coordinador
+- ALV SALV con semáforo (icono)
+- Gestión transaccional correcta (commit/rollback)
+- Log de operaciones
+
+========================
+3.2 Pantalla de Selección
+========================
+En ZBP_AUDIT_FIX_FV crear:
+- SELECT-OPTIONS so_partner FOR BUT000-PARTNER (o BU_PARTNER).
+- Parámetro tipo BP (1 char): 'P' Persona, 'O' Organización, 'A' Todos (default 'A').
+- CHECKBOX p_sim  "Modo simulación" (default X) -> iv_simulation.
+- CHECKBOX p_err  "Solo con errores" (filtra el ALV).
+Validación:
+- so_partner no puede ir vacío (mensaje E en AT SELECTION-SCREEN).
+
+========================
+3.1 Reporte ALV (CL_SALV_TABLE) + Semáforo
+========================
+Mostrar un ALV usando CL_SALV_TABLE con columnas exactas:
+BP | Tipo | Campo | Valor Actual | Valor Corregido | Estado | Mensaje
+
+Requisito crítico: semáforo debe ser icono real:
+- Campo Estado debe ser TYPE icon_d en la estructura tt_alv (o en tabla de salida del reporte).
+- Usar INCLUDE <icon>.
+- Mapear estado a:
+  icon_led_green  = válido
+  icon_led_yellow = corregible (hay propuesta ejecutable)
+  icon_led_red    = error crítico o fallo update
+En SALV:
+- Marcar la columna Estado como icono: lo_col->set_icon( abap_true ).
+- Ajustar headers y layout.
+Filtro “Solo con errores”:
+- Si p_err = X, mostrar solo filas con icon_led_red o icon_led_yellow.
+- No usar FILTER (usar DELETE WHERE o LOOP/APPEND).
+
+Nota: Si rt_result de execute_audit_and_fix no trae icon_d, adaptar en el reporte creando una tabla local para display con campo icon_d y copiar datos.
+
+========================
+3.3 Gestión Transaccional
+========================
+Reglas:
+- Si p_sim = X: NO ejecutar BAPIs de actualización, NO commit/rollback; solo auditoría/propuestas/log.
+- Si p_sim = space: permitir actualización.
+
+Transacciones:
+- Ejecutar BAPI_TRANSACTION_COMMIT solo si actualización exitosa (sin mensajes E/A).
+- Ejecutar BAPI_TRANSACTION_ROLLBACK si hay error técnico o retorno tipo E/A.
+- No hacer COMMIT WORK dentro de loops por campo.
+- Consolidar mensajes BAPI (BAPIRET2) y reflejarlos en la columna Mensaje del ALV.
+Arquitectura:
+- El Updater ejecuta las BAPIs por campo (NIT/DPI/EMAIL/PHONE) pero NO hace commit/rollback interno.
+- El punto único de commit/rollback debe estar en coordinador o reporte (elige uno y sé consistente).
+
+========================
+3.4 Log de Operaciones
+========================
+Usar ZCL_BP_AUDIT_LOG_FV para registrar en ZBP_AUDITLOG_FV:
+- BP procesado
+- Campo
+- Valor actual y corregido
+- Resultado (simulación/actualizado/error)
+- Mensaje principal (BAPI o validación)
+Requisitos:
+- Log tanto en simulación como en real.
+- Performance: registrar en batch si es posible (evitar INSERT en loops si ya hay opción masiva).
+- Si el log falla: capturar ZCX_BP_AUDIT_FV y mostrar mensaje final, sin dump.
+
+========================
+Entrega requerida
+========================
+Entregar código listo para pegar en ZBP_AUDIT_FIX_FV:
+1) selection-screen + validaciones
+2) START-OF-SELECTION:
+   - instanciar updater y coordinador
+   - llamar execute_audit_and_fix( it_partner_range = so_partner[] iv_bp_type = ... iv_simulation = p_sim )
+   - aplicar filtro p_err
+   - mapear estado a icon_d si es necesario
+3) display SALV con set_icon( abap_true ) en columna Estado y headers correctos
+Sin crear nuevos objetos Z. Sin SELECT en loops. No usar FILTER.
