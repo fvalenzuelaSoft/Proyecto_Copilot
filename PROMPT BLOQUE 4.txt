@@ -1,0 +1,76 @@
+Actúa como consultor ABAP senior (ABAP 7.40+, S/4HANA/ECC) y ayúdame a completar el **BLOQUE 4: Calidad y Documentación** del proyecto “Auditoría y Corrección de Business Partners”.
+
+OBJETOS REALES DEL PAQUETE (usar exactamente estos nombres)
+- Clases:
+  - ZCL_BP_AUDIT_FV
+  - ZCL_BP_AUDIT_LOG_FV
+  - ZCL_BP_PROCESSOR_FV
+  - ZCL_BP_REPO_FV
+  - ZCL_BP_UPDATER_FV
+  - ZCL_BP_VAL_DPI_FV
+  - ZCL_BP_VAL_EMAIL_FV
+  - ZCL_BP_VAL_NIT_FV
+  - ZCL_BP_VAL_PHONE_FV
+  - ZCX_BP_AUDIT_FV
+- Interfaces:
+  - ZIF_BP_AUDIT_LOG_FV
+  - ZIF_BP_REPO_FV
+  - ZIF_BP_UPDATER_FV
+  - ZIF_BP_VALIDATOR_FV
+
+OBJETIVO
+1) Crear ABAP Unit Tests (ABAP 7.40+) con clases de test locales (LTCL_*) para:
+   - NIT: casos válidos e inválidos (ZCL_BP_VAL_NIT_FV)
+   - DPI: válidos e inválidos (ZCL_BP_VAL_DPI_FV)
+   - Email: válidos y errores de formato (ZCL_BP_VAL_EMAIL_FV)
+   - Teléfono: con y sin código país correcto, longitudes, caracteres (ZCL_BP_VAL_PHONE_FV)
+
+2) Completar ABAPDoc para:
+   - Todas las clases públicas listadas arriba
+   - Todas las interfaces listadas arriba
+   - Todos los métodos públicos de esas clases e interfaces
+   - Incluir reglas de negocio y normativa aplicable SOLO si está en el código o lo indico yo. Si falta info, NO inventes: agrega “ASSUMPTIONS:” en ABAPDoc.
+
+FORMATO ABAPDoc OBLIGATORIO (copiar literal)
+"! <p class="shorttext synchronized">Descripción breve</p>
+"! Descripción detallada explicando funcionalidad
+"! @parameter <param> | <desc>
+"! @returning <ret> | <desc>
+"! @raising zcx_bp_audit_fv | Error de validación/auditoría
+
+3) Revisión tipo “Copilot”
+- Verificar que no existan campos/parametros incorrectos (si hay BAPIs, proxies o estructuras, validar componentes reales).
+- Revisar manejo de excepciones end-to-end:
+  - Usar ZCX_BP_AUDIT_FV de forma consistente donde aplique
+  - No tragar excepciones silenciosamente
+  - Mensajes claros y reutilizables
+- Confirmar adherencia a nomenclatura SAP/Z (ZCL_*, ZIF_*, ZCX_*, constantes GC_*, atributos MV_/MS_/MT_*, tipos TT_/TS_).
+
+REGLAS DE CALIDAD (OBLIGATORIAS)
+- Clean ABAP: métodos pequeños, early return, nombres claros.
+- Performance: nada de SELECT en loops, nada de SELECT *.
+- Tests sin dependencias a BD. Si el código depende de BD/servicios, proponer seam/double mínimo (por interfaz) y aplicarlo sin romper diseño.
+- ABAP 7.40+: usa sintaxis moderna compatible.
+- Entregar **código listo para pegar** (clases con LTCL_* + ABAPDoc aplicado). Evitar placeholders vacíos.
+
+ENTRADA QUE TE PEGARÉ
+Te pegaré en mensajes separados el código completo de:
+- ZCL_BP_VAL_EMAIL_FV
+- ZCL_BP_VAL_PHONE_FV
+- ZCL_BP_VAL_NIT_FV
+- ZCL_BP_VAL_DPI_FV
+- ZCL_BP_AUDIT_FV / ZCL_BP_PROCESSOR_FV (si quieres que documente orquestación)
+- ZCL_BP_AUDIT_LOG_FV / ZIF_BP_AUDIT_LOG_FV
+- ZCL_BP_REPO_FV / ZIF_BP_REPO_FV
+- ZCL_BP_UPDATER_FV / ZIF_BP_UPDATER_FV
+- ZIF_BP_VALIDATOR_FV
+- ZCX_BP_AUDIT_FV
+- Tipos de issues (si existen)
+
+SALIDA ESPERADA (EN ESTE ORDEN)
+A) Código de Unit Tests por clase (LTCL_*) usando AAA
+B) Código de las mismas clases e interfaces con ABAPDoc agregado en clase/interfaz y métodos públicos
+C) Lista de hallazgos/correcciones (parámetros/campos inválidos, excepciones, naming, performance)
+D) Checklist “Bloque 4” marcable
+
+Empieza cuando te pegue la primera clase o interfaz. No inventes reglas si no están en el código.
